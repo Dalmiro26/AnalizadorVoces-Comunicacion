@@ -1,0 +1,6 @@
+{
+  "name": "Simulador de Canal y Analizador Espectral DSP",
+  "description": "Simulador de telecomunicaciones y analizador espectral FFT con procesamiento de audio en tiempo real, modelo de canal AWGN y capacidad de Shannon-Hartley.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
