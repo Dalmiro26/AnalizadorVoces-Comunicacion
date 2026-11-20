@@ -55,21 +55,14 @@ export class ProcesarSenalUseCase {
     let outputSnrDb: number;
 
     if (!isSimulationEnabled) {
-      // Bypass / Loopback directo
-      const directOpts: ChannelSimulationOptions = {
-        ...options,
-        distanceKm: 0,
-        injectedSnrDb: 60,
-        applyTelephoneFilter: false,
-        fadingModel: "none",
-      };
-      const directResult = ChannelPhysicsService.simulateChannel(inputSignal, directOpts);
+      // Bypass / Loopback directo: la salida es idéntica a la entrada
+      const inputPower = ChannelPhysicsService.calculateRMSandDBFS(inputSignal);
       degradedSignal = new Float32Array(inputSignal);
       attenuationDb = 0;
       linearGain = 1.0;
       noiseSigma = 0;
-      inRms = directResult.inputRms;
-      inDbfs = directResult.inputDbfs;
+      inRms = inputPower.rms;
+      inDbfs = inputPower.dbfs;
       outputSnrDb = 60;
     } else {
       const channelResult = ChannelPhysicsService.simulateChannel(inputSignal, options);
@@ -82,14 +75,21 @@ export class ProcesarSenalUseCase {
       outputSnrDb = channelResult.outputSnrDb;
     }
 
-    // 2. Transformadas Rápidas de Fourier (FFT Cooley-Tukey con Hamming)
-    const inputFft = FourierService.computeFFT(inputSignal, sampleRate, "HAMMING");
+    // 2. Ventana de análisis: tramo de 4096 muestras con mayor energía de la entrada.
+    // Se usa el mismo tramo en entrada y salida para que los espectros sean comparables.
+    const ANALYSIS_WINDOW = 4096;
+    const offset = FourierService.findMostEnergeticWindowOffset(inputSignal, ANALYSIS_WINDOW);
+    const inputFrame = inputSignal.subarray(offset, offset + ANALYSIS_WINDOW);
+    const outputFrame = degradedSignal.subarray(offset, offset + ANALYSIS_WINDOW);
+
+    // 3. Transformadas Rápidas de Fourier (FFT Cooley-Tukey con Hamming)
+    const inputFft = FourierService.computeFFT(inputFrame, sampleRate, "HAMMING");
     const outputFft = isSimulationEnabled
-      ? FourierService.computeFFT(degradedSignal, sampleRate, "HAMMING")
+      ? FourierService.computeFFT(outputFrame, sampleRate, "HAMMING")
       : inputFft;
 
-    // 3. Frecuencia fundamental (f0) y clasificación acústica
-    const pitchResult = PitchDetectorService.detectPitch(inputSignal, sampleRate);
+    // 3b. Frecuencia fundamental (f0) y clasificación acústica de la voz de entrada
+    const pitchResult = PitchDetectorService.detectPitch(inputFrame, sampleRate);
     const { f0, periodT0, classification } = pitchResult;
 
     // 4. Ancho de banda eficaz (B)
@@ -119,10 +119,13 @@ export class ProcesarSenalUseCase {
       rms: Math.round(inRms * 1000) / 1000,
       dbfs: Math.round(inDbfs * 10) / 10,
       attenuationDb: Math.round(attenuationDb * 10) / 10,
-      linearGain: Math.round(linearGain * 1000) / 1000,
-      noiseSigma: Math.round(noiseSigma * 1000) / 1000,
+      // 4 cifras significativas: con redondeo fijo a 3 decimales k y σ quedaban en 0
+      // para atenuaciones altas (ej. 75 dB → k = 0.00018).
+      linearGain: Number(linearGain.toPrecision(4)),
+      noiseSigma: Number(noiseSigma.toPrecision(4)),
       inputSnrDb: Math.round(options.injectedSnrDb * 10) / 10,
       outputSnrDb: Math.round(outputSnrDb * 10) / 10,
+      channelBandwidthHz: channelBw,
       shannonCapacityKbps: shannonResult.capacityKbps,
       spectralEfficiency: shannonResult.spectralEfficiency,
       pesqScore,

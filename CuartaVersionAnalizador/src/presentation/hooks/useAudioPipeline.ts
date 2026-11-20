@@ -106,18 +106,22 @@ export function useAudioPipeline() {
   );
 
   // Modificación de opciones de canal
+  // (El pipeline se ejecuta fuera del actualizador de estado: los updaters de React deben
+  // ser puros; en StrictMode se invocaban dos veces y se procesaba el canal por duplicado.)
   const handleOptionsChange = useCallback(
     (newOpts: Partial<ChannelSimulationOptions>) => {
-      setChannelOptions((prev) => {
-        const updated = { ...prev, ...newOpts };
-        LocalStoragePreferences.saveChannelOptions(updated);
-        if (originalSignal.length > 0) {
-          runDspPipeline(originalSignal, updated, channelSimulationEnabled);
-        }
-        return updated;
-      });
+      const updated = { ...channelOptions, ...newOpts };
+      // Descartar valores no numéricos provenientes de los sliders
+      if (!Number.isFinite(updated.distanceKm)) updated.distanceKm = channelOptions.distanceKm;
+      if (!Number.isFinite(updated.alphaDbPerKm)) updated.alphaDbPerKm = channelOptions.alphaDbPerKm;
+      if (!Number.isFinite(updated.injectedSnrDb)) updated.injectedSnrDb = channelOptions.injectedSnrDb;
+      setChannelOptions(updated);
+      LocalStoragePreferences.saveChannelOptions(updated);
+      if (originalSignal.length > 0) {
+        runDspPipeline(originalSignal, updated, channelSimulationEnabled);
+      }
     },
-    [originalSignal, channelSimulationEnabled, runDspPipeline]
+    [channelOptions, originalSignal, channelSimulationEnabled, runDspPipeline]
   );
 
   // Alternar simulación de canal
@@ -150,9 +154,17 @@ export function useAudioPipeline() {
 
       // Clonar buffer defensivamente
       const safeSignal = new Float32Array(testSignal);
+      // Sincronizar la frecuencia de muestreo: osciloscopio, espectro y reproducción
+      // leen channelOptions.sampleRate; si difiere de la usada para generar la señal,
+      // el eje de frecuencias y el tono reproducido quedan desplazados.
+      const syncedOptions: ChannelSimulationOptions = { ...channelOptions, sampleRate };
+      if (syncedOptions.sampleRate !== channelOptions.sampleRate) {
+        setChannelOptions(syncedOptions);
+        LocalStoragePreferences.saveChannelOptions(syncedOptions);
+      }
       setOriginalSignal(safeSignal);
-      setElapsedSec(duration);
-      runDspPipeline(safeSignal, { ...channelOptions, sampleRate }, channelSimulationEnabled);
+      setElapsedSec(safeSignal.length / sampleRate);
+      runDspPipeline(safeSignal, syncedOptions, channelSimulationEnabled);
     },
     [channelOptions, channelSimulationEnabled, runDspPipeline]
   );

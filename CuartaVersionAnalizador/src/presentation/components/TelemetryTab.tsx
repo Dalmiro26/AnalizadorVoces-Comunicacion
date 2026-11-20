@@ -14,7 +14,8 @@ interface TelemetryTabProps {
 }
 
 export const TelemetryTab: React.FC<TelemetryTabProps> = ({ metrics, options }) => {
-  const B = options.applyTelephoneFilter ? 3100 : metrics.effectiveBandwidth;
+  // Mismo B que el usado para calcular C: así el punto operativo cae sobre la curva
+  const B = metrics.channelBandwidthHz ?? (options.applyTelephoneFilter ? 3100 : metrics.effectiveBandwidth);
   const capacityPoints = ShannonService.generateCapacityCurve(B, -20, 40, 2);
   const maxCap = capacityPoints[capacityPoints.length - 1].capacityKbps;
 

@@ -35,9 +35,12 @@ export const WaterfallSpectrogramCanvas: React.FC<WaterfallSpectrogramCanvasProp
     ctx.fillRect(0, 0, width, height);
 
     const windowSize = 1024;
-    const hopSize = 512;
     const maxWindows = 120;
-    const rawWindows = Math.floor((signal.length - windowSize) / hopSize);
+    // El salto se adapta para cubrir toda la señal con como máximo 120 ventanas.
+    // Con un salto fijo de 512 solo se mostraban los primeros ~1.3 s aunque el eje
+    // indicara la duración completa.
+    const hopSize = Math.max(512, Math.ceil((signal.length - windowSize) / maxWindows));
+    const rawWindows = Math.floor((signal.length - windowSize) / hopSize) + 1;
     const numWindows = Math.min(rawWindows, maxWindows);
 
     if (numWindows <= 0) return;
@@ -91,6 +94,7 @@ export const WaterfallSpectrogramCanvas: React.FC<WaterfallSpectrogramCanvasProp
       const fft = FourierService.computeFFT(slice, sampleRate, "HAMMING");
 
       const numBins = fft.frequencies.length;
+      if (numBins === 0) continue;
       const rowOffset = w * width;
 
       for (let x = 0; x < width; x++) {
@@ -130,7 +134,7 @@ export const WaterfallSpectrogramCanvas: React.FC<WaterfallSpectrogramCanvasProp
           </h3>
         </div>
         <div className="flex items-center gap-2 text-xs font-mono text-[#bac9cc]">
-          <span>Eje Y: Tiempo (0 a {durationSec.toFixed(1)}s)</span>
+          <span>Eje Y: Tiempo (0 a {(signal.length > 0 && sampleRate > 0 ? signal.length / sampleRate : durationSec).toFixed(1)}s)</span>
           <span>·</span>
           <span>Eje X: 0 a 6.000 Hz</span>
         </div>

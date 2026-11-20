@@ -67,11 +67,11 @@ export class PdfReportAdapter {
     y += 5.5;
 
     doc.text(`• Duración de Captura: ${durationSec.toFixed(1)} segundos`, col1, y);
-    doc.text(`• Atenuación Acumulada: -${metrics.attenuationDb.toFixed(1)} dB (k = ${metrics.linearGain.toFixed(3)})`, col2, y);
+    doc.text(`• Atenuación Acumulada: -${metrics.attenuationDb.toFixed(1)} dB (k = ${metrics.linearGain.toPrecision(3)})`, col2, y);
     y += 5.5;
 
     doc.text(`• Filtro Telefónico: ${options.applyTelephoneFilter ? "Activo (300 - 3400 Hz, Butterworth)" : "Bypass (Paso Directo)"}`, col1, y);
-    doc.text(`• Ruido AWGN Inyectado: ${options.injectedSnrDb.toFixed(1)} dB SNR (σ² = ${(metrics.noiseSigma * metrics.noiseSigma).toFixed(4)} V²)`, col2, y);
+    doc.text(`• Ruido AWGN Inyectado: ${options.injectedSnrDb.toFixed(1)} dB SNR (σ² = ${(metrics.noiseSigma * metrics.noiseSigma).toExponential(2)} V²)`, col2, y);
     y += 5.5;
 
     doc.text(`• Modelo de Desvanecimiento: ${options.fadingModel.toUpperCase()}`, col1, y);

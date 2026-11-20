@@ -67,6 +67,8 @@ export interface ChannelMetrics {
   inputSnrDb: number;
   /** SNR a la salida del canal físico en dB */
   outputSnrDb: number;
+  /** Ancho de banda B (Hz) usado en el cálculo de Shannon-Hartley */
+  channelBandwidthHz?: number;
   /** Capacidad teórica C en Kbps según Shannon-Hartley */
   shannonCapacityKbps: number;
   /** Eficiencia espectral C / B en bits/s/Hz */

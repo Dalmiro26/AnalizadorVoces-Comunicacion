@@ -34,6 +34,11 @@ export const OscilloscopeCanvas: React.FC<OscilloscopeCanvasProps> = ({
   const [isFrozen, setIsFrozen] = useState(false);
   const [voltageScale, setVoltageScale] = useState<number>(1.0);
   const [timeDivMs, setTimeDivMs] = useState<number>(500);
+  // Duración real de la señal mostrada (el slider puede haberse movido tras la captura)
+  const signalDurationSec =
+    originalSignal && originalSignal.length > 0 && sampleRate > 0
+      ? originalSignal.length / sampleRate
+      : durationSec;
   const [cursorX, setCursorX] = useState<number | null>(null);
   const [zoomLevel, setZoomLevel] = useState<number>(1.0);
   const [panPosition, setPanPosition] = useState<number>(0.5);
@@ -116,19 +121,40 @@ export const OscilloscopeCanvas: React.FC<OscilloscopeCanvasProps> = ({
         const startSample = Math.floor((totalSamples - visibleSamples) * panPosition);
         const step = visibleSamples / width;
 
+        // Trazado por envolvente mín/máx de cada columna de píxeles. Tomar una sola
+        // muestra por píxel (≈240 muestras por píxel en 5 s) producía aliasing visual:
+        // picos perdidos y formas de onda falsas, sobre todo con ruido AWGN.
+        const traceEnvelope = (sig: Float32Array) => {
+          const len = Math.min(sig.length, totalSamples);
+          for (let x = 0; x < width; x++) {
+            const i0 = Math.min(len - 1, startSample + Math.floor(x * step));
+            const i1 = Math.min(len, Math.max(i0 + 1, startSample + Math.floor((x + 1) * step)));
+            let lo = Infinity;
+            let hi = -Infinity;
+            for (let i = i0; i < i1; i++) {
+              const v = sig[i];
+              if (v < lo) lo = v;
+              if (v > hi) hi = v;
+            }
+            if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+              lo = 0;
+              hi = 0;
+            }
+            const yHi = midY - hi * voltageScale * (height * 0.42);
+            const yLo = midY - lo * voltageScale * (height * 0.42);
+            if (x === 0) ctx.moveTo(x, yHi);
+            else ctx.lineTo(x, yHi);
+            if (yLo !== yHi) ctx.lineTo(x, yLo);
+          }
+        };
+
         // CH2: Canal Simulado / Degradado (Coral)
         if (sig2 && sig2.length > 0 && !isLiveMonitoring) {
           ctx.strokeStyle = "rgba(255, 77, 109, 0.8)";
           ctx.lineWidth = 1.6;
           ctx.beginPath();
 
-          for (let x = 0; x < width; x++) {
-            const idx = Math.min(totalSamples - 1, startSample + Math.floor(x * step));
-            const val = sig2[idx] * voltageScale;
-            const y = midY - val * (height * 0.42);
-            if (x === 0) ctx.moveTo(x, y);
-            else ctx.lineTo(x, y);
-          }
+          traceEnvelope(sig2);
           ctx.stroke();
         }
 
@@ -137,13 +163,7 @@ export const OscilloscopeCanvas: React.FC<OscilloscopeCanvasProps> = ({
         ctx.lineWidth = 2.0;
         ctx.beginPath();
 
-        for (let x = 0; x < width; x++) {
-          const idx = Math.min(totalSamples - 1, startSample + Math.floor(x * step));
-          const val = sig1[idx] * voltageScale;
-          const y = midY - val * (height * 0.42);
-          if (x === 0) ctx.moveTo(x, y);
-          else ctx.lineTo(x, y);
-        }
+        traceEnvelope(sig1);
         ctx.stroke();
       } else {
         // Trazo inicial en cero voltios
@@ -169,7 +189,7 @@ export const OscilloscopeCanvas: React.FC<OscilloscopeCanvasProps> = ({
         const startFraction = panPosition * (1 - 1 / zoomLevel);
         const timeMs =
           Math.round(
-            ((startFraction + timeFraction / zoomLevel) * durationSec) * 1000 * 10
+            ((startFraction + timeFraction / zoomLevel) * signalDurationSec) * 1000 * 10
           ) / 10;
 
         ctx.fillStyle = "#1c1f29";
@@ -196,6 +216,7 @@ export const OscilloscopeCanvas: React.FC<OscilloscopeCanvasProps> = ({
     degradedSignal,
     sampleRate,
     durationSec,
+    signalDurationSec,
     isLiveMonitoring,
     liveBuffer,
     isFrozen,
@@ -425,9 +446,9 @@ export const OscilloscopeCanvas: React.FC<OscilloscopeCanvasProps> = ({
 
       {/* Escala Inferior Externa (Fuera de la onda) */}
       <div className="grid grid-cols-2 gap-x-2 gap-y-1 sm:flex sm:justify-between items-center font-mono text-[10px] sm:text-[11px] text-[#849396] px-2 py-1 bg-[#0a0e17] rounded-md border border-[#1c1f29]">
-        <span>t = {(panPosition * (1 - 1 / zoomLevel) * durationSec).toFixed(2)} s</span>
+        <span>t = {(panPosition * (1 - 1 / zoomLevel) * signalDurationSec).toFixed(2)} s</span>
         <span className="text-[#bac9cc] text-center">Referencia Central: 0.00 V (Trigger: CH1)</span>
-        <span className="text-right">t = {((panPosition * (1 - 1 / zoomLevel) + 1 / zoomLevel) * durationSec).toFixed(2)} s</span>
+        <span className="text-right">t = {((panPosition * (1 - 1 / zoomLevel) + 1 / zoomLevel) * signalDurationSec).toFixed(2)} s</span>
       </div>
     </div>
   );

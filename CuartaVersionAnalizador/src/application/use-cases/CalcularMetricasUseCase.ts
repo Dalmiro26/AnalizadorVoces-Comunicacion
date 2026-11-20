@@ -27,8 +27,11 @@ export class CalcularMetricasUseCase {
     }
 
     const { rms, dbfs } = ChannelPhysicsService.calculateRMSandDBFS(signal);
-    const fft = FourierService.computeFFT(signal, sampleRate, "HAMMING");
-    const { f0, periodT0, classification } = PitchDetectorService.detectPitch(signal, sampleRate);
+    // Analizar el tramo de mayor energía (no solo el comienzo del búfer)
+    const offset = FourierService.findMostEnergeticWindowOffset(signal, 4096);
+    const frame = signal.subarray(offset, offset + 4096);
+    const fft = FourierService.computeFFT(frame, sampleRate, "HAMMING");
+    const { f0, periodT0, classification } = PitchDetectorService.detectPitch(frame, sampleRate);
     const { bw, bwInf, bwSup } = FourierService.calculateEffectiveBandwidth(fft);
     const shannon = ShannonService.calculateCapacity(bw, 60);
 

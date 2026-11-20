@@ -182,7 +182,7 @@ export class ChannelPhysicsService {
       sumSq += buffer[i] * buffer[i];
     }
     const rms = Math.sqrt(sumSq / Math.max(1, len));
-    const dbfs = 20 * Math.log10(Math.max(rms, 1e-6));
+    const dbfs = 20 * Math.log10(Math.max(rms, 1e-6)); // piso de -120 dBFS
     return { rms, dbfs };
   }
 
@@ -203,23 +203,28 @@ export class ChannelPhysicsService {
     } = options;
 
     const N = inputSignal.length;
-    const degradedSignal = new Float32Array(N);
+    // Camino de señal (atenuada + fading) y camino de ruido se procesan por separado
+    // para poder medir la SNR real a la salida del canal (después del filtro).
+    const signalPath = new Float32Array(N);
+    const noisePath = new Float32Array(N);
 
     // 1. Atenuación en el medio de transmisión
-    const totalAttenuationDb = distanceKm * alphaDbPerKm;
+    const totalAttenuationDb = Math.max(0, distanceKm * alphaDbPerKm);
     const linearGain = Math.pow(10, -totalAttenuationDb / 20);
 
     // 2. Medición de potencia de la señal de entrada
     const { rms: inRms, dbfs: inDbfs } = this.calculateRMSandDBFS(inputSignal);
     const sigPower = inRms * inRms;
 
-    // 3. Potencia de ruido blanco según SNR inyectado
+    // 3. Potencia de ruido blanco según SNR inyectado (relativa a la señal ya atenuada).
+    // Sin piso fijo: un piso absoluto rompía la relación SNR a grandes distancias.
     const snrLinear = Math.pow(10, injectedSnrDb / 10);
-    const targetNoisePower = Math.max(1e-8, (sigPower * linearGain * linearGain) / (snrLinear + 1e-9));
-    const noiseSigma = Math.sqrt(targetNoisePower);
+    const targetNoisePower = (sigPower * linearGain * linearGain) / Math.max(snrLinear, 1e-12);
+    const noiseSigma = Number.isFinite(targetNoisePower) ? Math.sqrt(Math.max(0, targetNoisePower)) : 0;
 
-    // Filtro telefónico ITU-T G.711
-    const filter = applyTelephoneFilter ? new TelephonePSTNFilter(sampleRate) : null;
+    // Filtro telefónico ITU-T G.711 (filtro lineal: se aplica por separado a cada camino)
+    const signalFilter = applyTelephoneFilter ? new TelephonePSTNFilter(sampleRate) : null;
+    const noiseFilter = applyTelephoneFilter ? new TelephonePSTNFilter(sampleRate) : null;
 
     // Parámetros de fading multitrayecto
     let fadingPhase = 0;
@@ -229,7 +234,8 @@ export class ChannelPhysicsService {
     const noiseClamp = 3.5 * noiseSigma;
 
     for (let n = 0; n < N; n++) {
-      let s = inputSignal[n] * linearGain;
+      const x = inputSignal[n];
+      let s = (Number.isFinite(x) ? x : 0) * linearGain;
 
       if (fadingModel === "rayleigh") {
         fadingPhase += (2 * Math.PI * dopplerFreq) / sampleRate;
@@ -244,38 +250,58 @@ export class ChannelPhysicsService {
         s *= los + scattered;
       }
 
-      // Adición de Ruido Blanco Gaussiano (AWGN) con truncado a ±3.5σ
+      // Ruido Blanco Gaussiano (AWGN) con truncado a ±3.5σ
       // para evitar impulsiones extremas que generan clics y distorsión audible
-      let noise = this.generateGaussianSample(noiseSigma);
+      let noise = 0;
       if (noiseSigma > 0) {
+        noise = this.generateGaussianSample(noiseSigma);
         noise = Math.max(-noiseClamp, Math.min(noiseClamp, noise));
       }
-      degradedSignal[n] = s + noise;
+      signalPath[n] = s;
+      noisePath[n] = noise;
     }
 
     // Filtrado telefónico si está activo
-    const filteredSignal = filter ? filter.process(degradedSignal) : degradedSignal;
+    const filteredSignalPath = signalFilter ? signalFilter.process(signalPath) : signalPath;
+    const filteredNoisePath = noiseFilter ? noiseFilter.process(noisePath) : noisePath;
 
-    // Soft limiter: protege contra saturación digital sin normalizar la ganancia global.
-    // Aplica compresión suave (tanh) para picos por encima de 0.95 y techo duro en ±0.98.
-    const SOFT_CLIP_THRESHOLD = 0.95;
+    // Recepción: señal + ruido
+    const filteredSignal = new Float32Array(N);
+    let peak = 0;
+    for (let n = 0; n < N; n++) {
+      const y = filteredSignalPath[n] + filteredNoisePath[n];
+      filteredSignal[n] = y;
+      const a = Math.abs(y);
+      if (a > peak) peak = a;
+    }
+
+    // Protección contra saturación digital: si el pico supera el techo se aplica una
+    // única ganancia global (control automático de ganancia del receptor). A diferencia
+    // del recorte muestra a muestra, no altera la forma de onda, el espectro ni la SNR.
     const HARD_LIMIT = 0.98;
-    const softRange = HARD_LIMIT - SOFT_CLIP_THRESHOLD;
-    for (let n = 0; n < filteredSignal.length; n++) {
-      const x = filteredSignal[n];
-      const absX = Math.abs(x);
-      if (absX > SOFT_CLIP_THRESHOLD) {
-        const sign = x > 0 ? 1 : -1;
-        const excess = absX - SOFT_CLIP_THRESHOLD;
-        filteredSignal[n] = sign * (SOFT_CLIP_THRESHOLD + softRange * Math.tanh(excess / softRange));
+    if (peak > HARD_LIMIT) {
+      const agc = HARD_LIMIT / peak;
+      for (let n = 0; n < N; n++) {
+        filteredSignal[n] *= agc;
       }
     }
 
-    // Medición de salida
+    // Medición de salida: SNR real = P(señal filtrada) / P(ruido filtrado)
     const { rms: outRms, dbfs: outDbfs } = this.calculateRMSandDBFS(filteredSignal);
-    const outSigPower = Math.max(1e-9, outRms * outRms);
-    const finalNoisePower = Math.max(1e-9, noiseSigma * noiseSigma);
-    const outputSnrDb = Math.max(-30, Math.min(60, 10 * Math.log10(outSigPower / finalNoisePower)));
+    const { rms: sigOutRms } = this.calculateRMSandDBFS(filteredSignalPath);
+    const { rms: noiseOutRms } = this.calculateRMSandDBFS(filteredNoisePath);
+    const outSigPower = sigOutRms * sigOutRms;
+    const outNoisePower = noiseOutRms * noiseOutRms;
+    let outputSnrDb: number;
+    if (outNoisePower <= 0) {
+      outputSnrDb = outSigPower > 0 ? 60 : -60;
+    } else if (outSigPower <= 0) {
+      outputSnrDb = -60;
+    } else {
+      outputSnrDb = 10 * Math.log10(outSigPower / outNoisePower);
+    }
+    // Rango cubre todo el slider de SNR inyectado (-45 dB) más la mejora del filtro
+    outputSnrDb = Math.max(-60, Math.min(60, outputSnrDb));
 
     return {
       degradedSignal: filteredSignal,

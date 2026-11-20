@@ -73,9 +73,24 @@ export class PitchDetectorService {
     }
 
     if (bestLag <= 0 || maxCorr < 0.25) {
-      // Tono débil o inarmónico
-      const classification = this.classifyVoice(120, 0.3);
-      return { f0: 120, periodT0: (1 / 120) * 1000, confidence: 0.3, classification };
+      // Tono débil o inarmónico (ruido): no se inventa una f0 ficticia
+      const classification = this.classifyVoice(0, 0);
+      return { f0: 0, periodT0: 0, confidence: 0, classification };
+    }
+
+    // Corrección de errores de octava: la ACF de una señal periódica tiene picos casi
+    // iguales en T0, 2·T0, 3·T0... Se elige el primer máximo local cuya correlación
+    // alcance el 90 % del máximo global (el periodo verdadero más corto).
+    for (let lag = minLag + 1; lag < bestLag; lag++) {
+      if (
+        corr[lag] >= 0.9 * maxCorr &&
+        corr[lag] >= corr[lag - 1] &&
+        corr[lag] >= corr[lag + 1]
+      ) {
+        bestLag = lag;
+        maxCorr = corr[lag];
+        break;
+      }
     }
 
     // Refinamiento sub-muestra mediante ajuste parabólico

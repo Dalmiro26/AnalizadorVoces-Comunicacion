@@ -27,7 +27,9 @@ export class SignalGeneratorService {
     durationSec: number = 5,
     sampleRate: number = 44100
   ): Float32Array {
-    const totalSamples = Math.floor(Math.max(0.5, durationSec) * sampleRate);
+    // Duración efectiva (mínimo 0.5 s) usada tanto para el tamaño como para el chirp
+    const effectiveDurationSec = Number.isFinite(durationSec) ? Math.max(0.5, durationSec) : 0.5;
+    const totalSamples = Math.floor(effectiveDurationSec * sampleRate);
     const signal = new Float32Array(totalSamples);
 
     if (type === "male_voice") {
@@ -65,7 +67,7 @@ export class SignalGeneratorService {
     } else if (type === "chirp_sweep") {
       const fStart = 100;
       const fEnd = 4000;
-      const k = (fEnd - fStart) / durationSec;
+      const k = (fEnd - fStart) / effectiveDurationSec;
       for (let i = 0; i < totalSamples; i++) {
         const t = i / sampleRate;
         const freq = fStart + 0.5 * k * t;

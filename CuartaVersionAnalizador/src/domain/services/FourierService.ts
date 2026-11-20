@@ -85,6 +85,35 @@ export class FourierService {
   }
 
   /**
+   * Devuelve el desplazamiento (en muestras) del tramo de longitud `windowLength`
+   * con mayor energía. La FFT y la detección de f0 trabajan sobre 4096 muestras
+   * (~85-93 ms); sin esto solo se analizaba el comienzo de la grabación, que suele
+   * ser silencio previo a la voz.
+   */
+  public static findMostEnergeticWindowOffset(
+    signal: Float32Array,
+    windowLength: number = 4096
+  ): number {
+    const N = signal.length;
+    if (N <= windowLength) return 0;
+    const hop = Math.max(1, windowLength >> 2);
+    let bestOffset = 0;
+    let bestEnergy = -1;
+    for (let offset = 0; offset + windowLength <= N; offset += hop) {
+      let energy = 0;
+      for (let i = offset; i < offset + windowLength; i++) {
+        const x = signal[i];
+        energy += x * x;
+      }
+      if (energy > bestEnergy) {
+        bestEnergy = energy;
+        bestOffset = offset;
+      }
+    }
+    return bestOffset;
+  }
+
+  /**
    * Calcula la FFT de una señal aplicando Cooley-Tukey Radix-2.
    * Complejidad: O(N log2 N).
    * @param signal Muestras temporales de entrada x[n]
@@ -98,9 +127,10 @@ export class FourierService {
   ): FFTResult {
     // Asegurar tamaño potencia de 2 (máximo 4096 para respuesta en tiempo real)
     const maxN = Math.min(signal.length, 4096);
-    const N = 1 << Math.floor(Math.log2(maxN));
+    // Con menos de 4 muestras no existe un espectro útil (evita N = 1 y bins indefinidos)
+    const N = maxN >= 4 ? 1 << Math.floor(Math.log2(maxN)) : 0;
 
-    if (N <= 0 || !Number.isFinite(sampleRate) || sampleRate <= 0) {
+    if (N < 4 || !Number.isFinite(sampleRate) || sampleRate <= 0) {
       return {
         magnitudes: new Float32Array(0),
         magnitudesDb: new Float32Array(0),
@@ -125,10 +155,13 @@ export class FourierService {
 
     // Inversión de bits y ponderación de ventana en una sola pasada
     const bitRev = lookup.bitRev;
+    let windowSum = 0;
     for (let i = 0; i < N; i++) {
       const targetIdx = bitRev[i];
       const w = win ? win[i] : 1.0;
-      real[targetIdx] = signal[i] * w;
+      windowSum += w;
+      const x = signal[i];
+      real[targetIdx] = Number.isFinite(x) ? x * w : 0;
     }
 
     // Iteraciones Radix-2 Cooley-Tukey con mariposas (Decimation In Time)
@@ -167,11 +200,13 @@ export class FourierService {
     const freqStep = sampleRate / N;
     let maxMag = 0;
     let peakIdx = 1;
-    const twoOverN = 2.0 / N;
+    // Normalización por la ganancia coherente de la ventana (Σw[n]) para que un seno
+    // de amplitud A se lea como A (Hamming atenúa ~5.35 dB si se divide solo por N).
+    const twoOverN = 2.0 / Math.max(1e-12, windowSum);
 
     for (let k = 0; k < halfN; k++) {
       frequencies[k] = k * freqStep;
-      // Normalización de energía FFT: magnitud = 2 * sqrt(R^2 + I^2) / N
+      // Normalización de amplitud FFT: magnitud = 2 * sqrt(R^2 + I^2) / Σw[n]
       const mag = Math.hypot(real[k], imag[k]) * twoOverN;
       magnitudes[k] = mag;
 

@@ -22,8 +22,24 @@ export class LocalStoragePreferences {
     try {
       const data = localStorage.getItem(STORAGE_KEY_OPTIONS);
       if (!data) return defaults;
-      const parsed = JSON.parse(data);
-      return { ...defaults, ...parsed };
+      const parsed = JSON.parse(data) ?? {};
+      // Validar cada campo: un valor corrupto (ej. null por un NaN serializado) hacía
+      // fallar .toFixed() en el panel de control y rompía toda la interfaz.
+      const num = (v: unknown, fallback: number, min: number, max: number) =>
+        typeof v === "number" && Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : fallback;
+      return {
+        distanceKm: num(parsed.distanceKm, defaults.distanceKm, 0, 50),
+        alphaDbPerKm: num(parsed.alphaDbPerKm, defaults.alphaDbPerKm, 0, 10),
+        injectedSnrDb: num(parsed.injectedSnrDb, defaults.injectedSnrDb, -45, 20),
+        applyTelephoneFilter:
+          typeof parsed.applyTelephoneFilter === "boolean"
+            ? parsed.applyTelephoneFilter
+            : defaults.applyTelephoneFilter,
+        fadingModel: ["none", "rayleigh", "rician"].includes(parsed.fadingModel)
+          ? parsed.fadingModel
+          : defaults.fadingModel,
+        sampleRate: num(parsed.sampleRate, defaults.sampleRate, 8000, 192000),
+      };
     } catch {
       return defaults;
     }
