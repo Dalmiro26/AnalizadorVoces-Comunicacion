@@ -113,6 +113,9 @@ export class BiquadFilter {
 
 /**
  * Filtro Telefónico PSTN en Cascada de 4to orden (300 Hz - 3400 Hz) según ITU-T G.711.
+ * Butterworth de 4to orden descompuesto en dos secciones biquad de 2do orden en cascada.
+ * Q1 = 0.5412 (1ra sección, polo exterior del Butterworth)
+ * Q2 = 1.3066 (2da sección, polo interior del Butterworth)
  */
 export class TelephonePSTNFilter {
   private hp1: BiquadFilter;
@@ -121,10 +124,12 @@ export class TelephonePSTNFilter {
   private lp2: BiquadFilter;
 
   constructor(sampleRate: number) {
-    this.hp1 = new BiquadFilter("highpass", 300, sampleRate, 0.707);
-    this.hp2 = new BiquadFilter("highpass", 300, sampleRate, 0.707);
-    this.lp1 = new BiquadFilter("lowpass", 3400, sampleRate, 0.707);
-    this.lp2 = new BiquadFilter("lowpass", 3400, sampleRate, 0.707);
+    // Pasa-alto 300 Hz: dos secciones biquad con los Q del Butterworth de 4to orden
+    this.hp1 = new BiquadFilter("highpass", 300, sampleRate, 0.5412);
+    this.hp2 = new BiquadFilter("highpass", 300, sampleRate, 1.3066);
+    // Pasa-bajo 3400 Hz: dos secciones biquad con los Q del Butterworth de 4to orden
+    this.lp1 = new BiquadFilter("lowpass", 3400, sampleRate, 0.5412);
+    this.lp2 = new BiquadFilter("lowpass", 3400, sampleRate, 1.3066);
   }
 
   public process(buffer: Float32Array): Float32Array {
@@ -220,6 +225,9 @@ export class ChannelPhysicsService {
     let fadingPhase = 0;
     const dopplerFreq = 2.5; // Frecuencia Doppler lenta en Hz
 
+    // Límite de truncado gaussiano: ±3.5σ para evitar pops digitales
+    const noiseClamp = 3.5 * noiseSigma;
+
     for (let n = 0; n < N; n++) {
       let s = inputSignal[n] * linearGain;
 
@@ -236,13 +244,32 @@ export class ChannelPhysicsService {
         s *= los + scattered;
       }
 
-      // Adición de Ruido Blanco Gaussiano (AWGN)
-      const noise = this.generateGaussianSample(noiseSigma);
+      // Adición de Ruido Blanco Gaussiano (AWGN) con truncado a ±3.5σ
+      // para evitar impulsiones extremas que generan clics y distorsión audible
+      let noise = this.generateGaussianSample(noiseSigma);
+      if (noiseSigma > 0) {
+        noise = Math.max(-noiseClamp, Math.min(noiseClamp, noise));
+      }
       degradedSignal[n] = s + noise;
     }
 
     // Filtrado telefónico si está activo
     const filteredSignal = filter ? filter.process(degradedSignal) : degradedSignal;
+
+    // Soft limiter: protege contra saturación digital sin normalizar la ganancia global.
+    // Aplica compresión suave (tanh) para picos por encima de 0.95 y techo duro en ±0.98.
+    const SOFT_CLIP_THRESHOLD = 0.95;
+    const HARD_LIMIT = 0.98;
+    const softRange = HARD_LIMIT - SOFT_CLIP_THRESHOLD;
+    for (let n = 0; n < filteredSignal.length; n++) {
+      const x = filteredSignal[n];
+      const absX = Math.abs(x);
+      if (absX > SOFT_CLIP_THRESHOLD) {
+        const sign = x > 0 ? 1 : -1;
+        const excess = absX - SOFT_CLIP_THRESHOLD;
+        filteredSignal[n] = sign * (SOFT_CLIP_THRESHOLD + softRange * Math.tanh(excess / softRange));
+      }
+    }
 
     // Medición de salida
     const { rms: outRms, dbfs: outDbfs } = this.calculateRMSandDBFS(filteredSignal);
