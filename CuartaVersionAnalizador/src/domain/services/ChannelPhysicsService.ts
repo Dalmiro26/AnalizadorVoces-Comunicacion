@@ -13,7 +13,7 @@
  * - Cálculo de potencia RMS y conversión a dBFS.
  */
 
-import { ChannelSimulationOptions } from "../models/AudioModels";
+import { ChannelSimulationOptions } from "../entities";
 
 /**
  * Filtro IIR Biquad de segundo orden (Direct Form II Transposed).

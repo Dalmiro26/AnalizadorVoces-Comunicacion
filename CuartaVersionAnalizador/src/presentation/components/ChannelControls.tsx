@@ -8,7 +8,7 @@
 
 import React from "react";
 import { Mic, Radio, Play, Square, Sparkles } from "lucide-react";
-import { ChannelSimulationOptions } from "../../domain/models/AudioModels";
+import { ChannelSimulationOptions } from "../../domain/entities";
 import { AnalyticalSignalType } from "../../domain/services/SignalGeneratorService";
 
 interface ChannelControlsProps {

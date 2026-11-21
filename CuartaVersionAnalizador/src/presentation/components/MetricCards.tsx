@@ -10,7 +10,7 @@
 
 import React, { useState } from "react";
 import { Info } from "lucide-react";
-import { ChannelMetrics } from "../../domain/models/AudioModels";
+import { ChannelMetrics } from "../../domain/entities";
 
 interface MetricCardsProps {
   metrics: ChannelMetrics;

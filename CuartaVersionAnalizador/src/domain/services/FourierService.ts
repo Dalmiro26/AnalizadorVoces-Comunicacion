@@ -11,7 +11,7 @@
  * - Cálculo del Ancho de Banda Eficaz (B) por concentración espectral de energía.
  */
 
-import { FFTResult } from "../models/AudioModels";
+import { FFTResult } from "../entities";
 
 interface FFTLookupTable {
   bitRev: Uint16Array;

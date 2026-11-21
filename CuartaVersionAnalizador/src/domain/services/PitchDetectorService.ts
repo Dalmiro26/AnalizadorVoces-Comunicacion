@@ -9,7 +9,7 @@
  * - Clasificación fonética y de registro vocal humano (Barítono, Tenor, Mezzo, Soprano, Infantil).
  */
 
-import { VoiceClassification } from "../models/AudioModels";
+import { VoiceClassification } from "../entities";
 
 export interface PitchDetectionResult {
   /** Frecuencia fundamental en Hertz (0 si no hay tono periódico o hay silencio) */

@@ -12,7 +12,7 @@
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
 import { RotateCcw } from "lucide-react";
-import { FFTResult } from "../../domain/models/AudioModels";
+import { FFTResult } from "../../domain/entities";
 import { WindowFunctionType } from "../../domain/services/FourierService";
 
 interface SpectrumAnalyzerCanvasProps {

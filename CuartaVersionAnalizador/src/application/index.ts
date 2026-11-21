@@ -1,10 +1,13 @@
 /**
  * @license
- * DSP-LAB Telecom Core - Clean Architecture
- * Capa de Aplicación: Barrel export de Casos de Uso.
+ * DSP-LAB Telecom Core - Arquitectura en Capas
+ * Capa de Aplicación: Barrel export principal.
  */
 
-export * from "./use-cases/ProcesarSenalUseCase";
-export * from "./use-cases/CalcularMetricasUseCase";
-export * from "./use-cases/GenerarSenalPruebaUseCase";
-export * from "./use-cases/ExportarReporteUseCase";
+export * from "./dtos";
+export * from "./interfaces";
+export * from "./services/ProcesarSenalService";
+export * from "./services/CalcularMetricasService";
+export * from "./services/GenerarSenalPruebaService";
+export * from "./services/ExportarReporteService";
+export * from "./services/PreferenciasService";

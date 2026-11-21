@@ -10,8 +10,11 @@
 
 import React, { useEffect, useState } from "react";
 import { Pause, Play, Volume2 } from "lucide-react";
-import { globalAudioContextManager } from "../../infrastructure/audio/AudioContextManager";
-import { globalAudioPlaybackAdapter } from "../../infrastructure/audio/AudioPlaybackAdapter";
+import { appDependencies } from "../configurations/dependencies";
+import { userMessage } from "../middlewares/errorHandling";
+import { ErrorCodes, ErrorMessages } from "../../crossCutting/resources/ErrorCodes";
+
+const { audioContext, audioPlayback } = appDependencies;
 
 interface AudioPlayerDualProps {
   originalSignal: Float32Array;
@@ -30,39 +33,38 @@ export const AudioPlayerDual: React.FC<AudioPlayerDualProps> = ({
 
   useEffect(() => {
     return () => {
-      globalAudioPlaybackAdapter.stopAll();
+      audioPlayback.stopAll();
     };
   }, [originalSignal, degradedSignal]);
 
   const playChannel = async (channel: "A" | "B") => {
     if (playingChannel === channel) {
-      if (channel === "A") globalAudioPlaybackAdapter.stopPlaybackA();
-      else globalAudioPlaybackAdapter.stopPlaybackB();
+      if (channel === "A") audioPlayback.stopPlaybackA();
+      else audioPlayback.stopPlaybackB();
       setPlayingChannel(null);
       return;
     }
 
     // Detener el otro canal si estaba sonando
-    if (channel === "A") globalAudioPlaybackAdapter.stopPlaybackB();
-    else globalAudioPlaybackAdapter.stopPlaybackA();
+    if (channel === "A") audioPlayback.stopPlaybackB();
+    else audioPlayback.stopPlaybackA();
     setPlayingChannel(null);
     setPlaybackError(null);
 
     try {
       // Reanudar contexto sincrónicamente ante interacción directa
-      globalAudioContextManager.resumeSynchronously();
-      await globalAudioContextManager.ensureResumed();
+      audioContext.resumeSynchronously();
+      await audioContext.ensureResumed();
 
       const onEnded = () => setPlayingChannel(null);
       if (channel === "A") {
-        globalAudioPlaybackAdapter.playChannelA(originalSignal, sampleRate, onEnded);
+        audioPlayback.playChannelA(originalSignal, sampleRate, onEnded);
       } else {
-        globalAudioPlaybackAdapter.playChannelB(degradedSignal, sampleRate, onEnded);
+        audioPlayback.playChannelB(degradedSignal, sampleRate, onEnded);
       }
       setPlayingChannel(channel);
     } catch (error) {
-      console.error(`Error al reproducir Canal ${channel}:`, error);
-      setPlaybackError("No se pudo iniciar la reproducción de audio en este dispositivo.");
+      setPlaybackError(userMessage(error, ErrorMessages[ErrorCodes.PLAYBACK_FAILED]));
     }
   };
 

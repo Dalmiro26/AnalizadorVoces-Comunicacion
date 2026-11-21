@@ -5,7 +5,7 @@
  */
 
 import React from "react";
-import { ChannelMetrics, ChannelSimulationOptions } from "../../domain/models/AudioModels";
+import { ChannelMetrics, ChannelSimulationOptions } from "../../domain/entities";
 import { ShannonService } from "../../domain/services/ShannonService";
 
 interface TelemetryTabProps {

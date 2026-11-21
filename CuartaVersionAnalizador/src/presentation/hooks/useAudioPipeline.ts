@@ -3,8 +3,8 @@
  * DSP-LAB Telecom Core - Clean Architecture
  * Capa de Presentación: Hook useAudioPipeline.
  * 
- * Orquesta el flujo completo de audio, estados de React, casos de uso de la capa de Aplicación
- * y adaptadores de Infraestructura.
+ * Orquesta el flujo completo de audio y los estados de React. Consume únicamente las
+ * interfaces de la capa de Aplicación a través del contenedor `appDependencies`.
  * 
  * Corrección de Bugs Críticos:
  * - Bug 1 (Móviles): audioCtx.resume() sincrónico inmediato en el evento onClick antes de cualquier promesa.
@@ -14,40 +14,40 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import {
-  ChannelMetrics,
-  ChannelSimulationOptions,
-  FFTResult,
-  TelemetryReportData,
-} from "../../domain/models/AudioModels";
-import { ProcesarSenalUseCase } from "../../application/use-cases/ProcesarSenalUseCase";
-import {
-  GenerarSenalPruebaUseCase,
-} from "../../application/use-cases/GenerarSenalPruebaUseCase";
+import { ChannelMetrics, ChannelSimulationOptions, FFTResult } from "../../domain/entities";
 import { AnalyticalSignalType } from "../../domain/services/SignalGeneratorService";
-import { globalAudioContextManager } from "../../infrastructure/audio/AudioContextManager";
-import { globalMicrophoneCaptureAdapter } from "../../infrastructure/audio/MicrophoneCaptureAdapter";
-import { globalAudioPlaybackAdapter } from "../../infrastructure/audio/AudioPlaybackAdapter";
-import { LocalStoragePreferences } from "../../infrastructure/storage/LocalStoragePreferences";
-import { PdfReportAdapter } from "../../infrastructure/export/PdfReportAdapter";
-import { CsvExportAdapter } from "../../infrastructure/export/CsvExportAdapter";
+import { TelemetryReportData } from "../../application/dtos/TelemetryReportModel";
+import { isFiniteNumber } from "../../crossCutting/helpers/NumberHelpers";
+import { ErrorCodes } from "../../crossCutting/resources/ErrorCodes";
+import { appDependencies } from "../configurations/dependencies";
+import { handleError, messageFor } from "../middlewares/errorHandling";
+
+const {
+  procesarSenal,
+  generarSenalPrueba,
+  exportarReporte,
+  preferencias,
+  audioContext,
+  audioCapture,
+  audioPlayback,
+} = appDependencies;
 
 export function useAudioPipeline() {
   // 1. Duración del muestreo con protección contra Stale Closures (Bug 2 Fix)
   const [durationSec, setDurationSec] = useState<number>(() =>
-    LocalStoragePreferences.loadSamplingDuration(5.0)
+    preferencias.loadSamplingDuration(5.0)
   );
   const duracionRef = useRef<number>(durationSec);
 
   useEffect(() => {
     duracionRef.current = durationSec;
-    LocalStoragePreferences.saveSamplingDuration(durationSec);
+    preferencias.saveSamplingDuration(durationSec);
   }, [durationSec]);
 
   // 2. Parámetros del modelo físico de canal
   const [channelSimulationEnabled, setChannelSimulationEnabled] = useState<boolean>(false);
   const [channelOptions, setChannelOptions] = useState<ChannelSimulationOptions>(() =>
-    LocalStoragePreferences.loadChannelOptions({
+    preferencias.loadChannelOptions({
       distanceKm: 10.0,
       alphaDbPerKm: 1.5,
       injectedSnrDb: -20.0,
@@ -86,20 +86,17 @@ export function useAudioPipeline() {
       if (signalToProcess.length === 0) return;
 
       try {
-        const result = ProcesarSenalUseCase.execute(signalToProcess, opts, isSimEnabled);
+        const result = procesarSenal.execute(signalToProcess, opts, isSimEnabled);
         setDegradedSignal(result.degradedSignal);
         setMetrics(result.metrics);
         setInputFft(result.inputFft);
         setOutputFft(result.outputFft);
         setProcessingError(null);
       } catch (err) {
-        console.error("Error en Caso de Uso ProcesarSenalUseCase:", err);
         setMetrics(null);
         setInputFft(null);
         setOutputFft(null);
-        setProcessingError(
-          `Error al procesar la señal de audio: ${err instanceof Error ? err.message : String(err)}`
-        );
+        setProcessingError(handleError(err, "Error al procesar la señal de audio"));
       }
     },
     []
@@ -112,11 +109,11 @@ export function useAudioPipeline() {
     (newOpts: Partial<ChannelSimulationOptions>) => {
       const updated = { ...channelOptions, ...newOpts };
       // Descartar valores no numéricos provenientes de los sliders
-      if (!Number.isFinite(updated.distanceKm)) updated.distanceKm = channelOptions.distanceKm;
-      if (!Number.isFinite(updated.alphaDbPerKm)) updated.alphaDbPerKm = channelOptions.alphaDbPerKm;
-      if (!Number.isFinite(updated.injectedSnrDb)) updated.injectedSnrDb = channelOptions.injectedSnrDb;
+      if (!isFiniteNumber(updated.distanceKm)) updated.distanceKm = channelOptions.distanceKm;
+      if (!isFiniteNumber(updated.alphaDbPerKm)) updated.alphaDbPerKm = channelOptions.alphaDbPerKm;
+      if (!isFiniteNumber(updated.injectedSnrDb)) updated.injectedSnrDb = channelOptions.injectedSnrDb;
       setChannelOptions(updated);
-      LocalStoragePreferences.saveChannelOptions(updated);
+      preferencias.saveChannelOptions(updated);
       if (originalSignal.length > 0) {
         runDspPipeline(originalSignal, updated, channelSimulationEnabled);
       }
@@ -145,8 +142,8 @@ export function useAudioPipeline() {
   const handleGenerateTestSignal = useCallback(
     (type: AnalyticalSignalType) => {
       const duration = duracionRef.current;
-      const sampleRate = globalAudioContextManager.sampleRate;
-      const testSignal = GenerarSenalPruebaUseCase.execute({
+      const sampleRate = audioContext.sampleRate;
+      const testSignal = generarSenalPrueba.execute({
         type,
         durationSec: duration,
         sampleRate,
@@ -160,7 +157,7 @@ export function useAudioPipeline() {
       const syncedOptions: ChannelSimulationOptions = { ...channelOptions, sampleRate };
       if (syncedOptions.sampleRate !== channelOptions.sampleRate) {
         setChannelOptions(syncedOptions);
-        LocalStoragePreferences.saveChannelOptions(syncedOptions);
+        preferencias.saveChannelOptions(syncedOptions);
       }
       setOriginalSignal(safeSignal);
       setElapsedSec(safeSignal.length / sampleRate);
@@ -176,8 +173,8 @@ export function useAudioPipeline() {
         clearInterval(recordIntervalRef.current);
       }
       captureAbortRef.current?.abort();
-      globalMicrophoneCaptureAdapter.stopLiveMonitoring();
-      globalAudioPlaybackAdapter.stopAll();
+      audioCapture.stopLiveMonitoring();
+      audioPlayback.stopAll();
     };
   }, []);
 
@@ -192,7 +189,7 @@ export function useAudioPipeline() {
       setIsLiveMonitoring(false);
       captureAbortRef.current?.abort();
       captureAbortRef.current = null;
-      globalMicrophoneCaptureAdapter.stopLiveMonitoring();
+      audioCapture.stopLiveMonitoring();
       if (recordIntervalRef.current) {
         clearInterval(recordIntervalRef.current);
         recordIntervalRef.current = null;
@@ -206,7 +203,7 @@ export function useAudioPipeline() {
     // directamente dentro del manejador del evento de clic, ANTES de cualquier
     // promesa o await. Esto preserva el gesto de usuario en iOS Safari y Android.
     // =========================================================================
-    globalAudioContextManager.resumeSynchronously();
+    audioContext.resumeSynchronously();
 
     // =========================================================================
     // BUG 2 CRITICAL FIX (STALE CLOSURE):
@@ -221,7 +218,7 @@ export function useAudioPipeline() {
     setElapsedSec(0);
     setProcessingError(null);
 
-    globalAudioPlaybackAdapter.stopAll();
+    audioPlayback.stopAll();
     setOriginalSignal(new Float32Array(0));
     setDegradedSignal(new Float32Array(0));
     setMetrics(null);
@@ -232,18 +229,18 @@ export function useAudioPipeline() {
 
     // Confirmación asíncrona de resume
     try {
-      await globalAudioContextManager.ensureResumed();
+      await audioContext.ensureResumed();
     } catch (err) {
-      console.error("Fallo al reanudar AudioContext:", err);
+      handleError(err, "Fallo al reanudar AudioContext");
       setIsRecording(false);
       captureAbortRef.current = null;
-      setProcessingError("No se pudo iniciar el sistema de audio.");
+      setProcessingError(messageFor(ErrorCodes.AUDIO_CONTEXT_FAILED));
       return;
     }
 
     // Iniciar visualizador en vivo durante la captura
     setIsLiveMonitoring(true);
-    const micConnected = await globalMicrophoneCaptureAdapter.startLiveMonitoring(
+    const micConnected = await audioCapture.startLiveMonitoring(
       (timeData, freqData) => {
         setLiveBuffer(timeData);
         setLiveFreqBuffer(freqData);
@@ -251,25 +248,23 @@ export function useAudioPipeline() {
     );
 
     if (!micConnected) {
-      globalMicrophoneCaptureAdapter.stopLiveMonitoring();
+      audioCapture.stopLiveMonitoring();
       setIsRecording(false);
       setIsLiveMonitoring(false);
       captureAbortRef.current = null;
-      setProcessingError(
-        "No se pudo acceder al micrófono. Por favor permite los permisos de audio en tu navegador."
-      );
+      setProcessingError(messageFor(ErrorCodes.MICROPHONE_ACCESS_DENIED));
       return;
     }
 
     if (captureController.signal.aborted) {
-      globalMicrophoneCaptureAdapter.stopLiveMonitoring();
+      audioCapture.stopLiveMonitoring();
       setIsRecording(false);
       setIsLiveMonitoring(false);
       captureAbortRef.current = null;
       return;
     }
 
-    const currentSampleRate = globalAudioContextManager.sampleRate;
+    const currentSampleRate = audioContext.sampleRate;
     const captureOptions: ChannelSimulationOptions = {
       ...channelOptions,
       sampleRate: currentSampleRate,
@@ -289,7 +284,7 @@ export function useAudioPipeline() {
 
     try {
       // Grabar buffer a través del adaptador de infraestructura
-      const recorded = await globalMicrophoneCaptureAdapter.recordBuffer(
+      const recorded = await audioCapture.recordBuffer(
         captureDurationSec,
         captureController.signal
       );
@@ -306,7 +301,7 @@ export function useAudioPipeline() {
       setIsRecording(false);
       setIsLiveMonitoring(false);
       captureAbortRef.current = null;
-      globalMicrophoneCaptureAdapter.stopLiveMonitoring();
+      audioCapture.stopLiveMonitoring();
 
       if (recordIntervalRef.current) {
         clearInterval(recordIntervalRef.current);
@@ -319,21 +314,18 @@ export function useAudioPipeline() {
         setElapsedSec(safeCapturedSignal.length / currentSampleRate);
         runDspPipeline(safeCapturedSignal, captureOptions, channelSimulationEnabled);
       } else if (!captureController.signal.aborted) {
-        setProcessingError("La captura no registró muestras de audio. Intenta nuevamente.");
+        setProcessingError(messageFor(ErrorCodes.EMPTY_CAPTURE));
       }
     } catch (err) {
-      console.error("Error durante la grabación de audio:", err);
       setIsRecording(false);
       setIsLiveMonitoring(false);
       captureAbortRef.current = null;
-      globalMicrophoneCaptureAdapter.stopLiveMonitoring();
+      audioCapture.stopLiveMonitoring();
       if (recordIntervalRef.current) {
         clearInterval(recordIntervalRef.current);
         recordIntervalRef.current = null;
       }
-      setProcessingError(
-        `Error al capturar audio: ${err instanceof Error ? err.message : String(err)}`
-      );
+      setProcessingError(handleError(err, "Error al capturar audio"));
     }
   }, [isRecording, channelOptions, channelSimulationEnabled, runDspPipeline]);
 
@@ -351,7 +343,11 @@ export function useAudioPipeline() {
       inputFft,
       outputFft,
     };
-    PdfReportAdapter.generatePdf(reportData);
+    try {
+      exportarReporte.exportPdfReport(reportData);
+    } catch (err) {
+      setProcessingError(handleError(err, "Error al exportar el reporte PDF"));
+    }
   }, [metrics, inputFft, outputFft, channelOptions, channelSimulationEnabled, originalSignal, degradedSignal]);
 
   const handleExportCsv = useCallback(() => {
@@ -367,7 +363,11 @@ export function useAudioPipeline() {
       inputFft,
       outputFft,
     };
-    CsvExportAdapter.exportCsv(reportData);
+    try {
+      exportarReporte.exportCsvTelemetry(reportData);
+    } catch (err) {
+      setProcessingError(handleError(err, "Error al exportar el CSV"));
+    }
   }, [metrics, inputFft, outputFft, channelOptions, channelSimulationEnabled, originalSignal, degradedSignal]);
 
   return {
